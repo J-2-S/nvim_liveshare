@@ -11,6 +11,7 @@ static HOST_UPDATES: OnceCell<Arc<Mutex<mpsc::Receiver<PlaceHolder>>>> = OnceCel
 pub async fn connect(host_addrs: impl ToSocketAddrs) -> Result<()> {
     let mut server_stream = TcpStream::connect(host_addrs).await?;
     let (tx, mut rx) = mpsc::channel::<PlaceHolder>(10);
+    Ok(())
 }
 pub async fn first_download<S>(socket: &mut S) -> Result<()>
 where
@@ -36,4 +37,7 @@ where
         }
         todo!()
     }
+}
+pub fn get_incoming_stream() -> Option<&'static Arc<Mutex<mpsc::Receiver<PlaceHolder>>>> {
+    HOST_UPDATES.get()
 }

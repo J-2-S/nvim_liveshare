@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::{error::Error, sync::Arc};
 use tokio::sync::{Mutex, OnceCell};
-
 static BROADCASTER: OnceCell<Arc<Mutex<tokio::sync::broadcast::Sender<String>>>> =
     OnceCell::const_new();
 

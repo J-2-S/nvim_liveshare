@@ -206,6 +206,7 @@ name = "nvim_liveshare"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "mlua",
  "serde",
  "serde_json",

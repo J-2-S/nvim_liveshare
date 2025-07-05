@@ -1,32 +1,13 @@
-use mlua;
-use serde::{Deserialize, Serialize};
+use crate::types::*;
+use anyhow::Result;
+use mlua::prelude::*;
 use std::io::Read;
-use std::{error::Error, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
-static BROADCASTER: OnceCell<Arc<Mutex<tokio::sync::broadcast::Sender<String>>>> =
+static BROADCASTER: OnceCell<Arc<Mutex<tokio::sync::broadcast::Sender<Message>>>> =
     OnceCell::const_new();
 
-#[derive(Serialize, Deserialize)]
-struct Position {
-    row: u32,
-    col: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Change {
-    content: String,
-    start: Position,
-    end: Position,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ChangeMessage {
-    method: String,
-    file: String,
-    changes: Vec<Change>,
-}
-
-pub async fn get_subscriber() -> tokio::sync::broadcast::Receiver<String> {
+pub async fn get_subscriber() -> tokio::sync::broadcast::Receiver<Message> {
     let broadcast = BROADCASTER
         .get_or_init(async || Arc::new(Mutex::new(tokio::sync::broadcast::channel(10).0)))
         .await
@@ -82,7 +63,7 @@ fn file_diff(original: String, new: String) -> Change {
         content: replacement,
         start: Position {
             row: start_line as u32,
-            col: start_col as u32,
+            col: start_col,
         },
         end: Position {
             row: end_line as u32,
@@ -90,34 +71,28 @@ fn file_diff(original: String, new: String) -> Change {
         },
     }
 }
+pub fn draft_change(
+    _: &mlua::Lua,
+    (buffer_content, file_path): (String, String),
+) -> Result<(), LuaError> {
+    //this function has to be sync it runs outside the runtime
+    let mut file_content = Vec::new();
+    std::fs::File::open(&file_path)?.read_to_end(&mut file_content)?;
+    let file_content = String::from_utf8(file_content).map_err(mlua::Error::external)?;
+    let change = file_diff(file_content, buffer_content);
+    let mut changes = Vec::new();
+    changes.push(change);
 
-pub async fn attach_to_instance(lua: &mlua::Lua, _: ()) -> Result<(), Box<dyn Error>> {
-    let broadcast = BROADCASTER
-        .get_or_init(async || Arc::new(Mutex::new(tokio::sync::broadcast::channel(10).0)))
-        .await
-        .lock()
-        .await;
-    lua.globals().set(
-        "draft_change",
-        lua.create_function(move |_lua, (buffer_content, file_path): (String, String)| {
-            let mut file_content = Vec::new();
-            std::fs::File::open(&file_path)?.read_to_end(&mut file_content)?;
-            let file_content =
-                String::from_utf8(file_content).map_err(|err| mlua::Error::external(err))?;
-            let change = file_diff(file_content, buffer_content);
-            let mut changes = Vec::new();
-            changes.push(change);
-
-            let message = ChangeMessage {
-                method: "update".to_string(),
-                file: file_path,
-                changes: changes,
-            };
-            broadcast
-                .send(serde_json::to_string(&message).map_err(|err| mlua::Error::external(err))?)
-                .map_err(|err| mlua::Error::external(err))?;
-            Ok(())
-        })?,
-    )?;
+    let message = Message {
+        method: Method::Push,
+        file: file_path,
+        changes,
+    };
+    BROADCASTER
+        .get()
+        .ok_or(LuaError::external("BROADCASTER was not set"))?
+        .blocking_lock()
+        .send(message)
+        .map_err(mlua::Error::external)?;
     Ok(())
 }

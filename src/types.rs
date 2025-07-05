@@ -35,9 +35,7 @@ pub struct Change {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Method {
     Push,
-    Get,
     Exit,
-    Fetch,
     CreateFile,
     CreateDir,
 }

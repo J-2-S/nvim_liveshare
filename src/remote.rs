@@ -9,7 +9,7 @@ use std::{
 use tokio::fs::{self, File};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::{Mutex, OnceCell, mpsc, watch},
     task,
 };
@@ -66,7 +66,7 @@ async fn copy_cwd<S>(socket: &mut S) -> Result<()>
 where
     S: Send + AsyncReadExt + AsyncWriteExt + Unpin + AsyncWrite + AsyncRead,
 {
-    socket.write(br"\/INIT\/");
+    socket.write(br"\/INIT\/").await?;
     let cwd: PathBuf = CWD
         .lock()
         .await
@@ -137,18 +137,19 @@ where
         }
     }
 }
-async fn first_download<S>(socket: &mut S) -> Result<()>
-where
-    S: Send + AsyncReadExt + AsyncWriteExt + Unpin + AsyncWrite + AsyncRead,
-{
+
+pub async fn start_client(
+    target: String,
+    dir: &Path,
+    mut shutoff: watch::Receiver<bool>,
+) -> Result<()> {
+    let (tx, rx) = mpsc::channel::<PlaceHolder>(10);
+    CHANGES.set(Arc::new(Mutex::new(rx)))?;
+    let mut socket = TcpStream::connect(&target).await?;
+    socket.write(br"\/INIT\/").await?;
     let mut buff = vec![];
     socket.read(&mut buff).await?;
-    if buff != br"\/INIT\/" {
-        return Err(anyhow!("Invaild start to session"));
-    }
-    buff.clear();
-    while buff != br"\/DONE\/" {
-        socket.read(&mut buff).await?;
+    loop {
         let message: Message = serde_json::from_slice(&buff)?;
         match message.method {
             Method::CreateFile => {
@@ -157,18 +158,19 @@ where
                     .write(message.changes[0].content.as_bytes())
                     .await?;
             }
-            Method::CreateDir => todo!(),
-            _ => todo!(),
+            Method::CreateDir => {
+                fs::create_dir(message.file.clone()).await?;
+            }
+            Method::Exit => {
+                shutoff.changed().await?;
+                return Ok(());
+            }
+            Method::Push => {
+                tx.send(message).await?;
+            }
         };
+        socket.read(&mut buff).await?;
     }
-    todo!()
-}
-async fn start_client(
-    target: String,
-    dir: &Path,
-    mut shutoff: watch::Receiver<bool>,
-) -> Result<()> {
-    todo!()
 }
 pub fn get_incoming_stream() -> Option<&'static Arc<Mutex<mpsc::Receiver<PlaceHolder>>>> {
     CHANGES.get()

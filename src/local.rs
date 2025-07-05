@@ -71,10 +71,8 @@ fn file_diff(original: String, new: String) -> Change {
         },
     }
 }
-pub fn draft_change(
-    _: &mlua::Lua,
-    (buffer_content, file_path): (String, String),
-) -> Result<(), LuaError> {
+
+pub fn draft_change(_: &mlua::Lua, (buffer_content, file_path): (String, String)) -> LuaResult<()> {
     //this function has to be sync it runs outside the runtime
     let mut file_content = Vec::new();
     std::fs::File::open(&file_path)?.read_to_end(&mut file_content)?;
@@ -87,6 +85,36 @@ pub fn draft_change(
         method: Method::Push,
         file: file_path,
         changes,
+    };
+    BROADCASTER
+        .get()
+        .ok_or(LuaError::external("BROADCASTER was not set"))?
+        .blocking_lock()
+        .send(message)
+        .map_err(mlua::Error::external)?;
+    Ok(())
+}
+
+pub fn create_dir(_: &Lua, dir: String) -> LuaResult<()> {
+    let message: Message = Message {
+        method: Method::CreateDir,
+        file: dir,
+        changes: Vec::new(),
+    };
+    BROADCASTER
+        .get()
+        .ok_or(LuaError::external("BROADCASTER was not set"))?
+        .blocking_lock()
+        .send(message)
+        .map_err(mlua::Error::external)?;
+    Ok(())
+}
+
+pub fn create_file(_: &Lua, (file_name, dir_path): (String, String)) -> LuaResult<()> {
+    let message: Message = Message {
+        method: Method::CreateFile,
+        file: dir_path + &file_name,
+        changes: Vec::new(),
     };
     BROADCASTER
         .get()

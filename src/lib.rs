@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Result;
 use mlua::prelude::*;
-use std::sync::OnceLock;
+use std::{env::temp_dir, sync::OnceLock};
 use tokio::{
     runtime::{Builder, Runtime},
     sync::{Mutex, mpsc, watch},
@@ -55,8 +55,19 @@ fn share(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
     get_runtime().spawn(remote::start_server(config, rx));
     Ok(controler)
 }
-fn connect(lua: &Lua, _: ()) -> LuaResult<LuaTable> {
-    todo!()
+fn connect(lua: &Lua, (hostname): (String)) -> LuaResult<LuaTable> {
+    let temp_dir = temp_dir();
+    let dir = temp_dir.join("nvim_liveshare");
+    std::fs::create_dir(&dir)?;
+    let (tx, rx) = watch::channel(false);
+    let controler = lua.create_table()?;
+    controler.set(
+        "stop",
+        lua.create_function(move |_, _: ()| tx.send(true).map_err(LuaError::external))?,
+    )?;
+    controler.set("poll", lua.create_function(poll)?)?;
+    get_runtime().spawn(async move { remote::start_client(hostname, &dir, rx).await });
+    Ok(controler)
 }
 #[mlua::lua_module]
 fn rust_client(lua: &Lua) -> LuaResult<LuaTable> {
